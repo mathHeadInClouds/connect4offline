@@ -1,0 +1,470 @@
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en" lang="en">
+<head><title>4 gewinnt (2 players offline)</title>
+<script type="text/javascript" src="jquery-1.4.3.min.js"></script>	
+<script type="text/javascript">
+	var pi = Math.PI;
+	var white = "rgb(255, 255, 255)";
+	var black = "rgb(0, 0, 0)";
+	var gray = "rgb(88, 88, 88)";
+	var red = "rgb(255, 0, 0)";
+	var yellow = "rgb(255, 255, 0)";
+	var green = "rgb(0, 255, 0)";
+	var cyan = "rgb(0, 255, 255)";
+	var blue = "rgb(0, 0, 255)";
+	var darkBlue = "rgb(0, 0, 125)";
+	var magenta = "rgb(255, 0, 255)";
+	var transparent = "rgba(0,0,0,0)";
+	var messageFont = "14px Times New Roman";
+	var canvas;
+	var ctx;
+	var canvasWidth;
+	var canvasHeight;
+	var anim;
+	var board;
+	var player1, player2, currentPlayer, players;
+	var moveSelector;
+	var canvasMinX;
+	var canvasMaxX;	
+	var canvasMinY;
+	var canvasMaxY;	
+	function setInfo(str){ // debugging
+		//$("#info").html(str);
+	}
+	function MoveSelector(yOffset, halfWidth, height, color, hiliteColor, mouseDownColor){
+		this.yOffset = yOffset;
+		this.halfWidth = halfWidth;
+		this.height = height;
+		this.color = color;
+		this.hiliteColor = hiliteColor;
+		this.mouseDownColor = mouseDownColor;
+		this.selected = -1; // which triangle to hilite due to being moused over (-1 for none)
+		this.ready = false; // ready after mouseDown on triangle, move at mouseup
+	}
+	function initMoveSelector(){
+		ctx.fillStyle = this.color;
+		var xStep = board.radius;
+		for ( var col=0; col<board.numCols; col++ ){
+			ctx.beginPath();
+			ctx.moveTo((2*col+1)*xStep-this.halfWidth, this.yOffset);
+			ctx.lineTo((2*col+1)*xStep+this.halfWidth, this.yOffset);
+			ctx.lineTo((2*col+1)*xStep, this.yOffset + this.height);
+			ctx.fill();
+		}
+	}
+	MoveSelector.prototype.init = initMoveSelector;
+	function hiliteMoveSelector(col){
+		ctx.fillStyle = this.hiliteColor;
+		var xStep = board.radius;
+		ctx.beginPath();
+		ctx.moveTo((2*col+1)*xStep-this.halfWidth, this.yOffset);
+		ctx.lineTo((2*col+1)*xStep+this.halfWidth, this.yOffset);
+		ctx.lineTo((2*col+1)*xStep, this.yOffset + this.height);
+		ctx.fill();
+	}
+	MoveSelector.prototype.hilite = hiliteMoveSelector;
+	function hihiliteMoveSelector(col){
+		ctx.fillStyle = this.mouseDownColor;
+		var xStep = board.radius;
+		ctx.beginPath();
+		ctx.moveTo((2*col+1)*xStep-this.halfWidth, this.yOffset);
+		ctx.lineTo((2*col+1)*xStep+this.halfWidth, this.yOffset);
+		ctx.lineTo((2*col+1)*xStep, this.yOffset + this.height);
+		ctx.fill();
+	}
+	MoveSelector.prototype.hihilite = hihiliteMoveSelector;
+	function unhiliteMoveSelector(col){
+		ctx.fillStyle = this.color;
+		var xStep = board.radius;
+		ctx.beginPath();
+		ctx.moveTo((2*col+1)*xStep-this.halfWidth, this.yOffset);
+		ctx.lineTo((2*col+1)*xStep+this.halfWidth, this.yOffset);
+		ctx.lineTo((2*col+1)*xStep, this.yOffset + this.height);
+		ctx.fill();
+	}
+	MoveSelector.prototype.unhilite = unhiliteMoveSelector;
+	function findSelectedMoveMoveSelector(x, y){
+		if ( x <=0 ) return -1;
+		if ( x >= canvasWidth ) return -1;
+		if ( y < this.yOffset ) return -1;
+		if ( y > this.yOffset + this.height ) return -1;
+		/* line between
+			((2*col+1)*xStep-this.halfWidth, this.yOffset)       ( left point ) and
+			((2*col+1)*xStep, this.yOffset + this.height)       ( lower point ) 
+			has direction vector
+			(this.halfWidth, this.height)
+			and normal vector
+			(this.height, -this.halfWidth)
+			corresponding inequation is ( with h := this.height, w := halfWidth, y0 := this.yOffset, dx := xStep = board.radius, c := col )
+			(h, -w).(x, y) >= (h, -w).((2c+1)dx, y0 + h) = (2*dx*h)c + (h, -w).(dx, y0 + h)
+			<==> ((h, -w).(x-dx, y-y0-h)) / (2*dx*h) >= c
+		line between
+			((2*col+1)*xStep+this.halfWidth, this.yOffset)      ( right point ) and
+			((2*col+1)*xStep, this.yOffset + this.height)       ( lower point ) 
+			has direction vector
+			(w, -h)
+			and normal vector
+			(h, w)
+			corresponding inequation is
+			(h, w).(x, y) <= (h, w).((2c+1)dx, y0 + h) = (2*dx*h)c + (h, w).(dx, y0 + h)
+			<==> ((h, w).(x-dx, y-y0-h)) / (2*dx*h) <= c
+		*/
+		var xx = x - board.radius;
+		var yy = y - this.yOffset - this.height;
+		var deno = 2*board.radius*this.height;
+		var c1 = Math.floor((this.height*xx - this.halfWidth*yy)/deno);
+		var c2 = Math.ceil((this.height*xx + this.halfWidth*yy)/deno);
+		if ( c1 != c2 ) return -1; // mouse not over any triangle
+		var where = c1;
+		if ( board.content[where].length >= board.numRows ) return -1; // move illegal, column is full
+		return where;
+	}
+	MoveSelector.prototype.findSelectedMove = findSelectedMoveMoveSelector;
+	function checkMoveMoveSelector(x, y){
+		var choice = this.findSelectedMove(x, y);
+		if ( choice == this.selected ) return;
+		if ( this.selected >= 0 ) {
+			this.unhilite(this.selected);
+			this.ready = false;
+		}
+		if ( choice >= 0 ) this.hilite(choice);
+		this.selected = choice;
+	}
+	MoveSelector.prototype.checkMove = checkMoveMoveSelector;
+	function Player(index, color, name){
+		this.index = index;
+		this.color = color;
+		this.name = name;
+	}
+	function Board(numRows, numCols, radius, innerRadius, upperOffset, color, backgroundColor){
+		this.numRows = numRows;
+		this.numCols = numCols;
+		this.radius = radius;
+		this.innerRadius = innerRadius;
+		this.upperOffset = upperOffset;
+		this.color = color;
+		this.backgroundColor = backgroundColor;
+		this.content = [];
+		for ( var i=0; i<this.numCols; i++ ){
+			this.content.push([]);
+		}
+		this.winner = 0;
+	}
+	function initBoard(){
+		ctx.fillStyle = this.color;
+		// big rectangle covering everything
+		ctx.fillRect(0, this.upperOffset, canvasWidth, canvasHeight-this.upperOffset);
+		// set the clip area
+		// clip area contains the holes in the board
+		ctx.beginPath();
+		for ( var row=0; row<this.numRows; row++ ){
+			for ( var col=0; col<this.numCols; col++ ){
+				ctx.moveTo( (2*col+1)*this.radius + this.innerRadius, (2*row+1)*this.radius + this.upperOffset );
+				ctx.arc( (2*col+1)*this.radius, (2*row+1)*this.radius + this.upperOffset, this.innerRadius, 0, 2*pi, false);
+			}
+		}
+		// .. and the area on top for the move selectors
+		ctx.moveTo(0, 0);
+		ctx.lineTo(canvasWidth, 0);
+		ctx.lineTo(canvasWidth, this.upperOffset);
+		ctx.lineTo(0, this.upperOffset);
+		ctx.lineTo(0, 0);
+		ctx.clip();	
+		// put background behind the board
+		ctx.globalCompositeOperation = "source-over";
+		ctx.fillStyle = this.backgroundColor;
+		ctx.fillRect(0, this.upperOffset, canvasWidth, canvasHeight-this.upperOffset);
+	}
+	Board.prototype.init = initBoard;
+	function contentAtBoard(col, row){
+		if ( col < 0 ) return 0;
+		if ( col >= this.numCols ) return 0;
+		if ( row < 0 ) return 0;
+		if ( row >= this.content[col].length ) return 0;
+		return this.content[col][row];
+	}
+	Board.prototype.contentAt = contentAtBoard;
+	function fourAtBoard(startCol, startRow, dCol, dRow){
+		var player = this.contentAt(startCol, startRow);
+		if ( player == 0 ) return 0;
+		var col = startCol;
+		var row = startRow;
+		for ( var i=1; i<=3; i++ ){
+			col += dCol; row += dRow;
+			if ( this.contentAt( col, row) != player ) return 0;
+		}
+		this.winStartCol = startCol;
+		this.winStartRow = startRow;
+		this.winDCol = dCol;
+		this.winDRow = dRow;
+		return player;
+	}
+	Board.prototype.fourAt = fourAtBoard;
+	function checkWinHorizontalBoard(){
+		for ( var col=0; col<=this.numCols-4; col++ ){
+			for ( var row=0; row<this.numRows; row++ ){
+				var winner = this.fourAt( col, row, 1, 0);
+				if ( winner != 0 ) return winner;
+			}
+		}
+		return 0;
+	}
+	Board.prototype.checkWinHorizontal = checkWinHorizontalBoard;
+	function checkWinVerticalBoard(){
+		for ( var col=0; col<this.numCols; col++ ){
+			for ( var row=0; row<=this.numRows-4; row++ ){
+				var winner = this.fourAt( col, row, 0, 1);
+				if ( winner != 0 ) return winner;
+			}
+		}
+		return 0;
+	}
+	Board.prototype.checkWinVertical = checkWinVerticalBoard;
+	function checkWinDiag1Board(){
+		for ( var col=0; col<=this.numCols-4; col++ ){
+			for ( var row=0; row<=this.numRows-4; row++ ){
+				var winner = this.fourAt( col, row, 1, 1);
+				if ( winner != 0 ) return winner;
+			}
+		}
+		return 0;
+	}
+	Board.prototype.checkWinDiag1 = checkWinDiag1Board;
+	function checkWinDiag2Board(){
+		for ( var col=3; col<this.numCols; col++ ){
+			for ( var row=0; row<=this.numRows-4; row++ ){
+				var winner = this.fourAt( col, row, -1, 1);
+				if ( winner != 0 ) return winner;
+			}
+		}
+		return 0;
+	}
+	Board.prototype.checkWinDiag2 = checkWinDiag2Board;
+	function determineWinnnerBoard(){
+		var winner = this.checkWinHorizontal();
+		if ( winner ) return winner;
+		winner = this.checkWinVertical();
+		if ( winner ) return winner;
+		winner = this.checkWinDiag1();
+		if ( winner ) return winner;
+		return this.checkWinDiag2();
+	}
+	Board.prototype.determineWinnner = determineWinnnerBoard;
+	function checkWinBoard(){
+		var winner = this.determineWinnner();
+		if ( !winner ) return;
+		setInfo(winner);
+		ctx.restore();
+		// draw thick black line to indicate winning 4
+		var winEndCol = this.winStartCol + 3*this.winDCol;
+		var winEndRow = this.winStartRow + 3*this.winDRow;
+		var startX = this.radius * (2*this.winStartCol+1);
+		var startY = canvasHeight - this.radius * (2*this.winStartRow+1);
+		var endX = this.radius * (2*winEndCol+1);
+		var endY = canvasHeight - this.radius * (2*winEndRow+1);
+		ctx.lineWidth = 10;
+		ctx.strokeStyle = black;
+		ctx.beginPath();
+		ctx.moveTo(startX, startY);
+		ctx.lineTo(endX, endY);
+		ctx.stroke();
+		this.winner = winner;
+		// clear area to make label showing winner 
+		ctx.fillStyle = white;
+		ctx.beginPath();
+		ctx.moveTo(0, 0);
+		ctx.fillRect(0, 0, 120, 27);
+		// make label showing winner 
+		infoText("winner: ");
+		board.showPlayerSymbol( players[winner-1], 66);
+	}
+	Board.prototype.checkWin = checkWinBoard;
+	function moveBoard(player, where){
+		if ( this.content[where].length >= this.numRows ){
+			alert("impossible move");
+			return;
+		}
+		var animX = (2*where+1)*this.radius;
+		var animY1 = this.upperOffset+this.radius;
+		var animY2 = this.upperOffset + (2*this.numRows-1-2*this.content[where].length)*board.radius;
+		anim = new Animation(animX, animY1, animY2, this.radius, player.color);
+		anim.start();
+		this.content[where].push(player.index);
+		currentPlayer = ( currentPlayer == player1 ? player2 : player1 );
+		this.showPlayerSymbol(currentPlayer);
+	}
+	Board.prototype.move = moveBoard;
+	function showPlayerSymbolBoard(player, x){
+		if ( arguments.length < 2 ) { x = 86; }
+		var radius = 9;
+		var y = 12;
+		ctx.fillStyle = player.color;
+		ctx.beginPath();
+		ctx.moveTo(x + radius, y);
+		ctx.arc( x, y, radius, 0, 2*pi, false);
+		ctx.fill();
+	}
+	Board.prototype.showPlayerSymbol = showPlayerSymbolBoard;
+	function infoText(txt){
+		ctx.font = messageFont;
+		ctx.fillStyle = "Black";
+		ctx.fillText(txt, 10, 17);
+	}
+	function init(){
+		anim = null;
+		canvas = document.getElementById('canvas');
+		if (!canvas) { alert("no canvas"); return; }
+		ctx = canvas.getContext('2d');
+		if ( !ctx ){ alert("no context"); return; }
+		ctx.save();
+		canvasWidth = canvas.width;
+		canvasHeight = canvas.height;
+		var upperOffset = 60; // board begins that much from top
+		var numRows = 6;
+		var numCols = 7;
+		var radius = 30;
+		var innerRadius = radius - 5;		
+		// gradient for background
+		var gradient = ctx.createLinearGradient(0, 0, canvasWidth, 0);
+		var colors = ["rgb(250, 255, 180)", "rgb(255, 250, 190)", "rgb(250, 255, 180)"];
+		for ( var i = 0; i < colors.length; i++ ){
+			gradient.addColorStop(i/2, colors[i]);
+		}
+		/* make the board */
+		board = new Board(numRows, numCols, radius, innerRadius, upperOffset, darkBlue, gradient);
+		board.init();
+		/* init Animation object */
+		Animation.prototype.epsilon = 0.5;
+		Animation.prototype.refreshInterval = 10;
+		Animation.prototype.stepSize = 13.5;
+		Animation.prototype.backgroundColor = gradient;
+		/* init the players */
+		player1 = new Player(1, red, "red player");
+		player2 = new Player(2, green, "green player");
+		currentPlayer = player1;
+		players = [player1, player2];
+		/* init moveSelector (triangles on top) */
+		moveSelector = new MoveSelector( 25, 20, 20, black, cyan, magenta);
+		moveSelector.init();
+		// next player info label
+		infoText("next move: ");
+		board.showPlayerSymbol(currentPlayer);
+		/* init mouse stuff */
+		canvasMinX = $("#canvas").offset().left;
+		canvasMaxX = canvasMinX + canvasWidth;
+		canvasMinY = $("#canvas").offset().top;
+		canvasMaxY = canvasMinY + canvasHeight;
+	}
+	function Animation(x, yStart, yEnd, radius, color){
+		this.x = x;
+		this.y = yStart;
+		this.yEnd = yEnd;
+		this.color = color;
+		this.radius = radius;
+		this.isRunning = false;
+		this.isFinished = false;
+		this.scheduledCall = null;
+	}
+	function startAnimation(){
+		ctx.fillStyle = this.color;
+		ctx.beginPath();
+		ctx.moveTo(this.x + this.radius, this.y);
+		ctx.arc(this.x, this.y, this.radius, 0, 2*pi, false);
+		ctx.closePath();
+		ctx.fill();
+		this.isRunning = true;
+		this.scheduledCall = setInterval("anim.step()", this.refreshInterval);
+	}
+	Animation.prototype.start = startAnimation;
+	function stepAnimation(){
+		var stopMe = false;
+		var d = this.stepSize;
+		var newY = this.y + this.stepSize;
+		if ( newY >= this.yEnd - 0.5 ) {
+			newY = this.yEnd;
+			d = newY - this.y;
+			stopMe = true;
+		} else {}
+		var radius1 = this.radius - this.epsilon;
+		var radius2 = this.radius + this.epsilon;
+		var dy = d/2;
+		var dx = Math.sqrt(this.radius*this.radius - dy*dy);
+		var angle = Math.atan2(dy, dx);
+		ctx.fillStyle = this.color;
+		ctx.beginPath();
+		// shrink original circle (to remove residues)
+		//ctx.moveTo(-dx, this.y + dy);
+		ctx.arc(this.x, newY, this.radius,  pi + angle, 2*pi - angle, true);
+		//ctx.lineTo(dx, this.y + dy);
+		ctx.arc(this.x, this.y, radius1,   angle,     pi - angle, false);
+		//ctx.lineTo(-dx, this.y + dy);
+		//ctx.closePath();
+		ctx.fill();
+		ctx.fillStyle = this.backgroundColor;
+		ctx.beginPath();
+		// augment original circle (to remove residues)
+		//ctx.moveTo(-dx, this.y + dy);
+		ctx.arc(this.x, newY, this.radius, pi + angle, 2*pi - angle, false);
+		//ctx.lineTo(dx, this.y + dy);
+		ctx.arc(this.x, this.y, radius2,   angle,       pi - angle, true);
+		//ctx.lineTo(-dx, this.y + dy);
+		ctx.closePath();
+		ctx.fill();
+		this.y = newY;
+		if ( stopMe ){
+			clearTimeout(this.scheduledCall);
+			this.isRunning = false;
+			this.isFinished = true;
+			if ( moveSelector.selected >= 0 ){
+				moveSelector.hilite(moveSelector.selected);
+			}
+			board.checkWin();
+		}
+	}
+	Animation.prototype.step = stepAnimation;
+	// mouse stuff
+	function onMouseMove(evt) {
+		// check for valid move
+		var x = evt.pageX - canvasMinX;
+		var y = evt.pageY - canvasMinY;
+		moveSelector.checkMove(x, y);
+	}
+	$(document).mousemove(onMouseMove);
+	function onMouseUp(evt) {
+		if ( board.winner ) return; // game over
+		if ( anim && anim.isRunning ) return; // moving during animation of previous move not allowed
+		onMouseMove(evt);
+		if ( moveSelector.selected >= 0 && moveSelector.ready )
+			board.move(currentPlayer, moveSelector.selected);
+		moveSelector.ready = false;
+	}
+	$(document).mouseup(onMouseUp);
+	function onMouseDown(evt) {
+		if ( board.winner ) return; // game over
+		if ( anim && anim.isRunning ) return; // moving during animation of previous move not allowed
+		onMouseMove(evt);
+		if ( moveSelector.selected >= 0 ){
+			moveSelector.hihilite(moveSelector.selected);
+			moveSelector.ready = true;
+		}
+	}
+	$(document).mousedown(onMouseDown);
+	
+	function start(){
+		canvas.width = canvas.width;
+		init();
+	}
+</script>
+<style type="text/css">
+canvas { border: 2px solid black; }
+</style>
+</head>
+<body onload="init();">
+<form>
+	<!--<input id="theButton" type="button" value="restart" onclick="start();">-->
+	<button onclick="start();">restart</button>
+	<span id="info"></span>
+</form>
+<canvas id="canvas" width="420" height="420"></canvas>
+</body>
+</html>
